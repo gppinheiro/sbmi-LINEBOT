@@ -1,0 +1,351 @@
+// --- Bibliotecas AVR ---
+#include <avr/io.h>
+#include <util/delay.h>
+
+// --- Nossa biblioteca ---
+#include "biblio.h"
+#include "lcd_gpta.h"
+
+// --- Variáveis Defenidas --
+// MOTORA
+#define INA1 2 //PD2 - 2
+#define INA2 3 //PD3 - 3
+#define PWMA 5 //PD5 - 5
+// MOTORB
+#define INB1 4 //PD4 - 4
+#define INB2 7 //PD7 - 7
+#define PWMB 6 //PD6 - 6
+// Tracker Sensor
+#define IR1 0  //PC0 - A0
+#define IR2 1  //PC1 - A1
+#define IR3 2  //PC2 - A2
+#define IR4 3  //PC3 - A3
+#define IR5 4  //PC4 - A4
+
+#define Kp 0.6
+#define Ki 0
+#define Kd 0.6
+
+// --- Variáveis Globais ---
+//unsigned int calibratedMin[5], calibratedMax[5];
+unsigned int maximo[5],minimo[5],normalized_sensor[5];
+
+// --- Funções criadas por nós ---
+// PWM
+// - Freq. PWM
+void set_frequency (char option) {
+  TCCR0B = option;
+  /*
+  TABLE:
+      option  frequency 
+        1      62.5  kHz
+        2       7.81 kHz
+        3       1.95 kHz
+        4     976.56  Hz
+        5     488.28  Hz
+        6     244.14  Hz
+        7      61.03  Hz   
+  */
+}
+// - Duty-cycle PWM 
+void set_duty (char c, int bit, float value) {
+  int duty;
+  value=value/100;
+  duty = (value*256)-1;
+  if (bit==6 && c=='D') {
+    OCR0B=duty; //OCR2B é para o pino 3 do arduino
+  }
+  else if (bit==5 && c=='D') {
+    OCR0A=duty; //OCR2A é para o pino 11 do arduino
+  }
+}
+
+// Motores
+// - Frente
+void forward (void) {
+  setIO('D',INA1);
+  resetIO('D',INA2);
+  setIO('D',INB1);
+  resetIO('D',INB2);
+}
+// - Para trás
+void reverse (void) {
+  resetIO('D',INA1);
+  setIO('D',INA2);
+  resetIO('D',INB1);
+  setIO('D',INB2);
+}
+// - Para Direita
+void right (void) {
+  setIO('D',INA1);
+  resetIO('D',INA2);
+  resetIO('D',INB1);
+  resetIO('D',INB2);
+}
+// - Para Esquerda
+void left (void) {
+  resetIO('D',INA1);
+  resetIO('D',INA2);
+  setIO('D',INB1);
+  resetIO('D',INB2);
+}
+// - Parar
+void stop (void) {
+  resetIO('D',INA1);
+  resetIO('D',INA2);
+  resetIO('D',INB1);
+  resetIO('D',INB2);
+}
+
+// Analog Read
+// - Inicialização ADC (Analog Digital Conversion)
+void init_ADC (void) {
+	// Definir Vref=AVcc
+  ADMUX = ADMUX | (1<<REFS0);
+  // Desativar buffer digital em PC0
+  DIDR0 = DIDR0 | (1<<PC0) | (1<<PC1)| (1<<PC2) | (1<<PC3) | (1<<PC4);
+  // Pré-divisor em 128 e ativar ADC
+  ADCSRA = ADCSRA | (7<<ADPS0)|(1<<ADEN);
+}
+// - Função para ler ADC
+uint16_t read_ADC (uint8_t ADC_channel) {
+  ADMUX = ADMUX | (1<<REFS0);
+  ADMUX = (ADMUX & 0xF0) | (ADC_channel & 0x0F);
+  ADCSRA |= (1<<ADSC);
+  while(ADCSRA & (1<<ADSC));
+  return ADC;
+}
+
+// Tracker Sensor
+// - Iniciar Tracker Sensor
+void init_TrackerSensor (void) {
+  // Inicia os INPUTS do sensor
+  initIO('C',IR1,0);
+  initIO('C',IR2,0);
+  initIO('C',IR3,0);
+  initIO('C',IR4,0);
+  initIO('C',IR5,0);
+  // Para a comparação não dar erro, colocar Min=Max(1023) e Max=Min(0)
+  /*for(int i=0;i<5;i++){
+		calibratedMin[i] = 1024;
+		calibratedMax[i] = 0;
+	}*/
+  for(int i=0;i<5;i++){
+		minimo[i] = 1024;
+		maximo[i] = 0;
+	}
+}
+// - Ler o valor dos sensores
+/*void AnalogRead (unsigned int *sensor_values) {
+  for (int i=0; i<5; i++) sensor_values[i]=read_ADC(i);
+}
+// - Calibrar sensor
+void Calibrate (void) {
+  int i;
+  unsigned int sensor_values[5];
+	unsigned int max_sensor_values[5];
+	unsigned int min_sensor_values[5];
+
+  // Colocar os valores maximos e minimos numa variavel auxiliar
+  for(int j=0;j<10;j++) {
+		AnalogRead(sensor_values);
+		for(i=0;i<5;i++) {
+			if(j==0 || max_sensor_values[i] < sensor_values[i])
+				max_sensor_values[i] = sensor_values[i];
+			if(j==0 || min_sensor_values[i] > sensor_values[i])
+				min_sensor_values[i] = sensor_values[i];
+		}
+	}
+
+  // Guardar valores maximos e minimos no calibratedMax e no calibratedMin
+  for(i=0;i<5;i++){
+    if(min_sensor_values[i] > calibratedMax[i])
+      calibratedMax[i] = min_sensor_values[i];
+    if(max_sensor_values[i] < calibratedMin[i])
+      calibratedMin[i] = max_sensor_values[i];
+  }
+}
+// - Ler valores calibrados e normaliza vetor
+void ReadCalibrate (unsigned int *sensor_values) {
+  unsigned int denominator;
+  signed int x=0;
+
+	AnalogRead(sensor_values);
+
+	for(int i=0;i<5;i++) {
+		denominator = calibratedMax[i] - calibratedMin[i];
+		if(denominator != 0) {x = (((signed long)sensor_values[i]) - calibratedMin[i])* 1000 / denominator;}
+
+		if(x<0) {x=0;}
+		else if(x > 1000) {x=1000;}
+
+		sensor_values[i]=x;
+	}
+}
+// - Lê a linha
+int ReadLine (unsigned int *sensor_values,int white_line) {
+  unsigned int i, on_line = 0;
+	unsigned long avg;              // this is for the weighted total, which is long
+	unsigned int sum;               // this is for the denominator which is <= 64000
+	static int last_value=0;        // assume initially that the line is left.
+  int value_sensor;
+
+	ReadCalibrate(sensor_values);
+
+	avg = 0;
+	sum = 0;
+  
+	for(i=0;i<5;i++) {
+		value_sensor = sensor_values[i];
+
+		if(!white_line)
+			value_sensor = 1000-value_sensor;
+		sensor_values[i] = value_sensor;
+
+		// keep track of whether we see the line at all
+		if(value_sensor > 300) {
+			on_line = 1;
+		}
+		
+		// only average in values that are above a noise threshold
+		if(value_sensor > 50) {
+			avg += (long)(value_sensor) * (i * 1000);
+			sum += value_sensor;
+		}
+	}
+
+	if(!on_line) {
+		// If it last read to the left of center, return 0.
+		 if(last_value < 4*1000/2)
+			 return 0;
+		
+		// If it last read to the right of center, return the max.
+		 else
+			 return 4*1000;
+	}
+
+	last_value = avg/sum;
+
+	return last_value;
+}*/
+void Calibracao(void){
+  unsigned int leu[5];
+
+  for(int j=0;j<10;j++){
+    for(int i=0;i<5;i++){
+      leu[i] = read_ADC(i);
+      if(leu[i] < minimo[i]) minimo[i] = leu[i];
+      if(leu[i] > maximo[i]) maximo[i] = leu[i];
+    }
+  }
+}
+
+void NormalizationProcess (unsigned int *sensor_values) {
+  for(int i=0;i<5;i++) {
+    sensor_values[i] = read_ADC(i);
+    normalized_sensor[i]= (sensor_values[i] - minimo[i])*1000/(maximo[i]-minimo[i]);
+    sensor_values[i]=normalized_sensor[i];
+  }
+}
+
+unsigned int WeightedAverage (unsigned int *sensor_values) {
+  unsigned int denominador=0,numerador=0,posicao=0;
+
+  for(int i=0;i<5;i++) {
+    denominador+=sensor_values[i];
+    numerador+=(i*1000)*sensor_values[i];
+  }
+
+  posicao=numerador/denominador;
+
+  return posicao;
+}
+
+//LCD -> Quase todas as funções estão na biblioteca
+void LCD_Print (int tracker_position, int n_voltas) {
+  LCD_Message(" Posicao:");
+  LCD_Integer(tracker_position);
+  LCD_Goto(0,15);
+  LCD_Integer(n_voltas);
+}
+
+// Iicialização
+void init_ALL (void) {
+  //INPUTS
+  init_ADC();
+  init_TrackerSensor();
+  SetupPorts();
+  LCD_Clear();
+  LCD_Init();
+
+  //Calibração dos sensores
+  for (int i = 0; i < 400; i++) {  // make the calibration take about 10 seconds
+    Calibracao();                   // reads all sensors 10 times
+  }
+
+  //OUTPUTS
+  initIO('D',INA1,1);
+  initIO('D',INA2,1);
+  initIO('D',PWMA,1);
+  initIO('D',INB1,1);
+  initIO('D',INB2,1);
+  initIO('D',PWMB,1);
+}
+//////////////// End Functions //////////////////
+
+// --- PRINCIPAL ---
+int main (void) {
+  //unsigned int position,n_voltas=0;
+  unsigned int sensor_values[5],posicao=0;
+  float dutyA=0,dutyB=0,pid;
+  double proportional,derivative,last_proportional;
+  init_ALL();
+
+  // PWM
+  TCCR0A = 0xA3; //1010 0011 -> 0011 é o modo fast PWM, fornecido pelo ATmega328p; 1010 -> Serve para mudar o duty-cycle
+  set_frequency(5);
+  /*set_duty('D',5,40);
+  set_duty('D',6,40);*/
+
+  while(1) {
+    NormalizationProcess(sensor_values);
+    posicao=WeightedAverage(sensor_values);
+
+    proportional = posicao - 2000;
+    derivative=proportional - last_proportional;
+    last_proportional=proportional;
+
+    pid=(proportional * Kp + /*integral * Ki +*/ derivative * Kd);
+    dutyA=50 + pid;
+    dutyB=50 - pid;
+    set_duty('D',5,dutyA);
+    set_duty('D',6,dutyB);
+    /*position = ReadLine(sensor_values,0);
+    if (position==2000) {
+      forward();
+      set_duty('D',5,50);
+      set_duty('D',6,50);
+    }
+    if (position==3000) {
+      right();
+      set_duty('D',5,40);
+      set_duty('D',6,10);
+    }
+    if (position==2000) {
+      left();
+      set_duty('D',5,20);
+      set_duty('D',6,50);
+    }
+    if (position==1000 || position==5000) {
+      n_voltas++;
+    }
+    if (position==0||position==1000||position==4000) {
+      stop();
+    }
+    LCD_Print(position,n_voltas,sensor_values);*/
+    if(posicao==1000) {left();}
+    if(posicao==2000) {forward();}
+    if(posicao==3000) {right();}
+    LCD_Print(posicao,10);
+  }
+}

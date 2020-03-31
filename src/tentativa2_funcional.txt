@@ -1,0 +1,240 @@
+// --- Bibliotecas AVR ---
+#include <avr/io.h>
+#include <util/delay.h>
+
+// --- Nossa biblioteca ---
+#include "biblio.h"
+#include "lcd_gpta.h"
+
+// --- Variáveis Defenidas --
+// MOTORA
+#define INA1 2 //PD2 - 2
+#define INA2 3 //PD3 - 3
+#define PWMA 5 //PD5 - 5
+// MOTORB
+#define INB1 4 //PD4 - 4
+#define INB2 7 //PD7 - 7
+#define PWMB 6 //PD6 - 6
+// Tracker Sensor
+#define IR1 0  //PC0 - A0
+#define IR2 1  //PC1 - A1
+#define IR3 2  //PC2 - A2
+#define IR4 3  //PC3 - A3
+#define IR5 4  //PC4 - A4
+#define KP 0.6
+#define KD 0.6
+#define KI 0
+
+// --- Variáveis Globais ---
+uint8_t volta, n_voltas;
+int16_t maximo[5],minimo[5];
+int32_t ler_sensor[5],vetor_normalizado[5];
+double proporcional=0,derivada=0,integral=0,antigo_proporcional=0;
+
+// --- Funções criadas por nós ---
+//LCD -> Quase todas as funções estão na biblioteca
+void LCD_Print (int32_t tracker_position, int n_voltas) {
+  LCD_Message(" Posicao:");
+  LCD_Integer(tracker_position);
+  LCD_Goto(0,15);
+  LCD_Integer(n_voltas);
+}
+// PWM
+// - Freq. PWM
+void set_frequency (char option) {
+  TCCR0B = option;
+  /*
+  TABLE:
+      option  frequency 
+        1      62.5  kHz
+        2       7.81 kHz
+        3       1.95 kHz
+        4     976.56  Hz
+        5     488.28  Hz
+        6     244.14  Hz
+        7      61.03  Hz   
+  */
+}
+// - Duty-cycle PWM 
+void set_duty (char c, int bit, float value) {
+  int duty;
+  value=value/100;
+  duty = (value*256)-1;
+  if (bit==6 && c=='D') {
+    OCR0B=duty; //OCR0B é para o pino 3 do arduino
+  }
+  else if (bit==5 && c=='D') {
+    OCR0A=duty; //OCR0A é para o pino 11 do arduino
+  }
+}
+
+// Motores
+// - Frente
+void forward (void) {
+  setIO('D',INA1);
+  resetIO('D',INA2);
+  setIO('D',INB1);
+  resetIO('D',INB2);
+}
+// - Para trás
+void reverse (void) {
+  resetIO('D',INA1);
+  setIO('D',INA2);
+  resetIO('D',INB1);
+  setIO('D',INB2);
+}
+// - Para Direita
+void right (void) {
+  setIO('D',INA1);
+  resetIO('D',INA2);
+  resetIO('D',INB1);
+  resetIO('D',INB2);
+}
+// - Para Esquerda
+void left (void) {
+  resetIO('D',INA1);
+  resetIO('D',INA2);
+  setIO('D',INB1);
+  resetIO('D',INB2);
+}
+// - Parar
+void stop (void) {
+  resetIO('D',INA1);
+  resetIO('D',INA2);
+  resetIO('D',INB1);
+  resetIO('D',INB2);
+}
+
+// Analog Read
+// - Inicialização ADC (Analog Digital Conversion)
+void init_ADC (void) {
+	// Definir Vref=AVcc
+  ADMUX = ADMUX | (1<<REFS0);
+  // Desativar buffer digital em PC0
+  DIDR0 = DIDR0 | (1<<PC0) | (1<<PC1)| (1<<PC2) | (1<<PC3) | (1<<PC4);
+  // Pré-divisor em 128 e ativar ADC
+  ADCSRA = ADCSRA | (7<<ADPS0)|(1<<ADEN);
+}
+// - Função para ler ADC
+uint32_t read_ADC (uint8_t ADC_channel) {
+  ADMUX = ADMUX | (1<<REFS0);
+  ADMUX = (ADMUX & 0xF0) | (ADC_channel & 0x0F);
+  ADCSRA |= (1<<ADSC);
+  while(ADCSRA & (1<<ADSC));
+  return ADC;
+}
+
+//Tracker Sensor
+// - Iniciar
+void init_TrackerSensor(void) {
+  // Inicia os INPUTS do sensor
+  initIO('C',IR1,0);
+  initIO('C',IR2,0);
+  initIO('C',IR3,0);
+  initIO('C',IR4,0);
+  initIO('C',IR5,0);
+  // Para a comparação não dar erro, colocar Min=Max(1023) e Max=Min(0)
+  for(int i=0;i<5;i++){
+		minimo[i] = 1023;
+		maximo[i] = 0;
+	}
+}
+// - Calibração
+void Calibracao (void) {
+  for(int j=0;j<400;j++) {
+    for (int i=0;i<5;i++) {
+      ler_sensor[i]=read_ADC(i);
+      if (ler_sensor[i]>maximo[i]) maximo[i]=ler_sensor[i];
+      if (ler_sensor[i]<minimo[i]) minimo[i]=ler_sensor[i];
+      _delay_ms(2);
+    }
+  }
+}
+// - Lê sensor
+void LerSensor (void) {
+  for(int i=0;i<5;i++) {
+    ler_sensor[i]=read_ADC(i);
+    vetor_normalizado[i]= (ler_sensor[i]-minimo[i])*1000/(maximo[i]-minimo[i]);
+  }
+}
+// - Posicao dos 3 sensores, os outros 2 só servem para aumentar o numero de voltas
+int32_t PosicaoSensor (void) {
+  int32_t denominador=0,numerador=0,posicao=0;
+
+  for(int i=1;i<4;i++) {
+    numerador+=((i-1)*1000)*vetor_normalizado[i];
+    denominador+=vetor_normalizado[i];
+  }
+
+  posicao=numerador/(denominador*20);
+
+  return posicao;
+}
+// - PID
+int32_t PID(int32_t posicao) {
+  proporcional = posicao - 50;
+  derivada = proporcional - antigo_proporcional;
+  integral += proporcional;
+  antigo_proporcional = proporcional;
+  return (proporcional*KP + derivada*KD + integral*KI);
+}
+// - Ler Linha
+void readLine() {
+  int32_t posicao,pid,dutyA,dutyB;
+
+  LerSensor();
+
+  if(vetor_normalizado[0]<150 && vetor_normalizado[4]<150 && volta==0) { volta=1; n_voltas++; } 
+  else if (vetor_normalizado[0]>900 && vetor_normalizado[4]>900 && volta==1) { volta=0; }
+
+  posicao=PosicaoSensor();
+  
+  LCD_Print(posicao,n_voltas);
+
+  pid=PID(posicao);
+  dutyA=50-pid;
+  dutyB=50+pid;
+
+  if(dutyA < 100) set_duty('D',5,dutyA);
+  if(dutyB < 100) set_duty('D',6,dutyB);
+  if(dutyA > 100) set_duty('D',5,100);
+  if(dutyB > 100) set_duty('D',6,100);
+  if(dutyA < 0) set_duty('D',5,0);
+  if(dutyB < 0) set_duty('D',6,0);
+}
+
+// Iicialização
+void init_ALL (void) {
+  n_voltas=0;
+  volta=0;
+  //INPUTS
+  init_ADC();
+  SetupPorts();
+  LCD_Clear();
+  LCD_Init();
+  init_TrackerSensor();
+  Calibracao();
+
+  //OUTPUTS
+  initIO('D',INA1,1);
+  initIO('D',INA2,1);
+  initIO('D',PWMA,1);
+  initIO('D',INB1,1);
+  initIO('D',INB2,1);
+  initIO('D',PWMB,1);
+}
+//////////////// End Functions //////////////////
+
+// --- PRINCIPAL ---
+int main (void) {
+  init_ALL();
+  forward();
+
+  // PWM
+  TCCR0A = 0xA3; //1010 0011 -> 0011 é o modo fast PWM, fornecido pelo ATmega328p; 1010 -> Serve para mudar o duty-cycle
+  set_frequency(5);
+
+  while(1) {
+    readLine();
+  }
+}

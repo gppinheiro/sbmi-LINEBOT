@@ -1,0 +1,50 @@
+//Define the pins  ===Change these to match the Arduino pins you used in your wiring===
+int STBY = 2; //standby
+//Motor A
+int PWMA = 5; //Speed control
+int AIN1 = 4; //Direction
+int AIN2 = 3; //Direction
+//Motor B
+int PWMB = 9; //Speed control
+int BIN1 = 7; //Direction
+int BIN2 = 8; //Direction
+
+//declare variables
+boolean aDir; //values 0 for one direction or 1 for other direction
+int aSpeed;   //values 0 off - 255 full
+boolean bDir; //values 0 or 1
+int bSpeed;   //values 0 - 255
+
+void setup() {
+  // put your setup code here, to run once:
+  //set the pins as outputs
+  pinMode(STBY, OUTPUT);
+ 
+  pinMode(PWMA, OUTPUT);
+  pinMode(AIN1, OUTPUT);
+  pinMode(AIN2, OUTPUT);
+ 
+  pinMode(PWMB, OUTPUT);
+  pinMode(BIN1, OUTPUT);
+  pinMode(BIN2, OUTPUT);
+}
+
+void loop() {
+  // put your main code here, to run repeatedly:
+  //put motor speed/direction code here
+  aDir = 0;
+  aSpeed = 255;
+  bDir = 0;
+  bSpeed = 255;
+  
+  //code to send control signals to TB6612
+  digitalWrite(STBY, HIGH);  
+  //MotorA
+  digitalWrite(AIN1, !aDir);
+  digitalWrite(AIN2, aDir);
+  analogWrite(PWMA, aSpeed);
+  //MotorB
+  digitalWrite(BIN1, !bDir);
+  digitalWrite(BIN2, bDir);
+  analogWrite(PWMB, bSpeed);
+}

@@ -1,0 +1,32 @@
+// --- Part 1: Normalization process ---
+
+Different sensors may output different results for the same color and distance.
+
+y = (x-Min)/(Max-Min), x is the original output from sensors
+
+y = (x - Min) * 1000 / (Max - Min), After transformed, the output value will be in the range of 0~1000, in which 1000 means the sensor is far away from the black line, and 0 means the sensor is above the black line.
+
+// --- Part 2: Weighted average ---
+
+y = (0 * value0 + 1000 * value1 + 2000 * value2 + 3000 * value3 +4000 * value4) / (value0 + value1 + value2 + value3 + value4)
+
+In which, 0, 1000, 2000, 3000, 4000 are the weights for the five detectors, respectively, from left to right. And value0~value4 are the data with normalization process.
+
+Now, we can get the data in the range of 0~4000, which can tell you the position of the black line. For example, 2000 means the black line is in the middle of the module, 0 means the black line is on the leftmost side of the module, and 4000 means the black line is on the rightmost side of the module.
+
+The width of the black line should be equal to or less than the distance of two sensors (16mm)!!
+
+// --- Part 3: PID control ---
+
+PID control can feedback and regulate the error with three factors, proportional (P), Integral (I), derivative (D). The followings are PID algorithm.
+
+proportional = position - 2000;
+derivative = proportional - last_proportional;
+integral += proportional;
+
+last_proportional = proportional;
+
+power_error = proportional * Kp + integral * Ki + derivative * Kd;
+
+https://www.waveshare.com/wiki/Tracker_Sensor
+

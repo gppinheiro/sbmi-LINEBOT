@@ -1,0 +1,15 @@
+ADADRUIT TB6612 
+
+PINOUTS:
+    - VM (Vmotor) -> voltage for the motors, not for logic level. Keep this voltage between 4.5V and 13.5V.
+    - Vcc -> this is the voltage for the logic levels. Set to the voltage logic you'll be using on your microcontroller. 5V for us!!
+    - GND -> This is the shared logic and motor ground. All grounds are connected!!
+
+    - INA1, INA2 -> these are the two inputs to the Motor A H-bridges
+    - PWMA -> this is the PWM input for the Motor A H-bridges, if you dont need PWM control, connect this to logic high.
+    - INB1, INB2 -> these are the two inputs to the Motor B H-bridges
+    - PWMB -> this is the PWM input for the Motor B H-bridges, if you dont need PWM control, connect this to logic high. 
+    - STBY -> this is the standby pin for quickly disabling both motors, pulled up to Vcc thru a 10K resistor. Connect to ground to disable. 
+
+    - Motor A -> these are the two outputs for motor A, controlled by INA1, INA2 and PWMA
+    - Motor B -> these are the two outputs for motor B, controlled by INB1, INB2 and PWMB
